@@ -36,9 +36,31 @@ state-changing command. `call('finish')` closes the control window. The workflow
 then stops processes and deletes its own Simulator; a finite timeout and hosted
 VM teardown bound failed runs. It never uploads a logged-in Simulator image.
 
+For commands issued from separate office Python processes, use
+`OfficeControl(metadata_path, raw_key_path, state_path)` from
+`scripts/office_control.py`. Provision private Windows directory ACLs first.
+The wrapper locks the state, records an in-flight command before dispatch and
+commits its sequence only after an authenticated reply. A crash or ambiguous
+failure leaves the state locked; do not remove the marker and retry a command.
+Verified operational errors return normally without an automatic retry. No UI
+parameters, responses or keys are persisted by the wrapper. Nine synthetic tests
+cover cross-process continuation, lock exclusion and failed state writes.
+
 If an account was signed in, **before `finish`** log out only the new authorization
 created by this test and verify its absence in Active Sessions from the existing
 trusted client. Preserve the existing Android authorization and all other devices.
+Before login, verify that this recovery client's authorization is older than
+24 hours: Telegram rejects another-session termination from a fresh client with
+`FRESH_RESET_AUTHORISATION_FORBIDDEN`. See the official
+[account.resetAuthorization contract](https://core.telegram.org/method/account.resetAuthorization).
+The pinned client's logout path catches an `auth.logOut()` error before removing
+its local account record, so a return to onboarding alone is not revocation proof.
+The run operator records the recovery-age evidence, reachable Active Sessions
+and the before-login device list in a private receipt. Do not enter the working
+phone number without these prerequisites or while revocation is pending. Identify
+the new row from the before/after difference plus client build, device and test
+time; never terminate an ambiguous existing row. After logout refresh the list
+and verify that only the new row disappeared. Do not publish these private lists.
 Deleting Simulator/VM does not revoke a Telegram authorization on the server. On
 interruption, terminate that exact new authorization from the trusted client;
 record `session_revocation_pending` until verified, and do not repeat production
