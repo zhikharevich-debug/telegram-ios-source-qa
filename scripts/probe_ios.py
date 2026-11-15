@@ -31,8 +31,15 @@ try:
     assert report["xcode"][0] == "Xcode 27.1", "Unexpected toolchain"
     runtimes = json.loads(command("xcrun", "simctl", "list", "runtimes", "--json"))["runtimes"]
     runtime = next(r for r in runtimes if r.get("isAvailable") and r["name"] == "iOS 27.1")
+    devices = json.loads(command("xcrun", "simctl", "list", "devices", "available", "--json"))["devices"]
+    available = devices.get(runtime["identifier"], [])
+    supported = runtime.get("supportedDeviceTypes", [])
+    report["available_devices"] = [d["name"] for d in available]
+    report["supported_types"] = [d["name"] for d in supported]
     types = json.loads(command("xcrun", "simctl", "list", "devicetypes", "--json"))["devicetypes"]
-    phone = next(t for t in types if t["name"] == "iPhone 17")
+    candidates = {d["deviceTypeIdentifier"] for d in available if d.get("isAvailable")}
+    candidates.update(d["identifier"] for d in supported)
+    phone = next(t for t in types if t["identifier"] in candidates and t["name"].startswith("iPhone"))
     report.update(runtime=runtime["name"], device=phone["name"])
     device = command("xcrun", "simctl", "create", "Native-QA-iPhone", phone["identifier"], runtime["identifier"])
     start = time.monotonic()
