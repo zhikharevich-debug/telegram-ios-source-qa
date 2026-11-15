@@ -1,6 +1,7 @@
 """Ephemeral hosted-macOS probe; never inspect accounts, keychains or application data."""
 
 import json
+import os
 import pathlib
 import shutil
 import subprocess
@@ -28,9 +29,9 @@ try:
         free_disk_gib=round(shutil.disk_usage(".").free / 2**30, 2),
     )
     assert report["architecture"] == "arm64", "Expected standard ARM runner"
-    assert report["xcode"][0] == "Xcode 27.1", "Unexpected toolchain"
+    assert report["xcode"][0] == "Xcode " + os.environ.get("QA_XCODE_VERSION", "27.1"), "Unexpected toolchain"
     runtimes = json.loads(command("xcrun", "simctl", "list", "runtimes", "--json"))["runtimes"]
-    runtime = next(r for r in runtimes if r.get("isAvailable") and r["name"] == "iOS 27.1")
+    runtime = next(r for r in runtimes if r.get("isAvailable") and r["name"] == os.environ.get("QA_IOS_RUNTIME", "iOS 27.1"))
     devices = json.loads(command("xcrun", "simctl", "list", "devices", "available", "--json"))["devices"]
     available = devices.get(runtime["identifier"], [])
     supported = runtime.get("supportedDeviceTypes", [])
@@ -43,10 +44,11 @@ try:
     report.update(runtime=runtime["name"], device=phone["name"])
     device = command("xcrun", "simctl", "create", "Native-QA-iPhone", phone["identifier"], runtime["identifier"])
     start = time.monotonic()
+    subprocess.run(["open", "-a", "Simulator", "--args", "-CurrentDeviceUDID", device], check=True, timeout=60)
     subprocess.run(["xcrun", "simctl", "boot", device], check=True, timeout=60)
     subprocess.run(["xcrun", "simctl", "bootstatus", device, "-b"], check=True, timeout=480)
     report["boot_seconds"] = round(time.monotonic() - start, 1)
-    subprocess.run(["xcrun", "simctl", "io", device, "screenshot", str(output / "clean-simulator.png")], check=True, timeout=45)
+    subprocess.run(["xcrun", "simctl", "io", device, "screenshot", str(output / "clean-simulator.png")], check=True, timeout=120)
     report["status"] = "passed"
 except Exception as error:
     report.update(status="failed", failure_type=type(error).__name__, failure=str(error)[:300])
