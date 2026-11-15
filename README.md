@@ -36,6 +36,16 @@ state-changing command. `call('finish')` closes the control window. The workflow
 then stops processes and deletes its own Simulator; a finite timeout and hosted
 VM teardown bound failed runs. It never uploads a logged-in Simulator image.
 
+For commands issued from separate office Python processes, use
+`OfficeControl(metadata_path, raw_key_path, state_path)` from
+`scripts/office_control.py`. Provision private Windows directory ACLs first.
+The wrapper locks the state, records an in-flight command before dispatch and
+commits its sequence only after an authenticated reply. A crash or ambiguous
+failure leaves the state locked; do not remove the marker and retry a command.
+Verified operational errors return normally without an automatic retry. No UI
+parameters, responses or keys are persisted by the wrapper. Nine synthetic tests
+cover cross-process continuation, lock exclusion and failed state writes.
+
 If an account was signed in, **before `finish`** log out only the new authorization
 created by this test and verify its absence in Active Sessions from the existing
 trusted client. Preserve the existing Android authorization and all other devices.
