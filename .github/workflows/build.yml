@@ -1,0 +1,33 @@
+name: Official Telegram source Simulator build
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-ios-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.event.repository.private == false
+    runs-on: xcode-27
+    timeout-minutes: 330
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Compile unchanged upstream source and launch signed-out native client
+        run: python3 scripts/build_ios.py
+      - name: Preserve public source build evidence only
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: source-build-evidence
+          path: artifacts/
+          retention-days: 1
+          if-no-files-found: ignore
