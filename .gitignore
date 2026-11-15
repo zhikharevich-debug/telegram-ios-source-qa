@@ -1,0 +1,6 @@
+.local/
+artifacts/
+Telegram-iOS/
+__pycache__/
+*.pyc
+.env
