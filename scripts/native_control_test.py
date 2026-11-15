@@ -247,8 +247,8 @@ class HttpBoundaryTests(unittest.TestCase):
                     response = excess.getresponse()
                     self.assertEqual(response.status, 401)
                     self.assertEqual(response.read(), b"")
-                except (ConnectionResetError, ConnectionAbortedError, control.http.client.RemoteDisconnected):
-                    # Windows may reset the rejected socket before its body is sent.
+                except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, control.http.client.RemoteDisconnected):
+                    # A rejected socket may close before the request body is sent.
                     pass
             finally:
                 excess.close()
