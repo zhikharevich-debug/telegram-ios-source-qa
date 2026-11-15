@@ -1,0 +1,33 @@
+name: Free iOS Simulator probe
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-ios-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    if: github.event.repository.private == false
+    runs-on: xcode-27
+    timeout-minutes: 15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Verify toolchain and boot a clean iPhone Simulator
+        run: python3 scripts/probe_ios.py
+      - name: Preserve non-sensitive probe evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: clean-ios-probe
+          path: artifacts/
+          if-no-files-found: ignore
+          retention-days: 1
