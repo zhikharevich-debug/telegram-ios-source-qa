@@ -39,6 +39,12 @@ VM teardown bound failed runs. It never uploads a logged-in Simulator image.
 If an account was signed in, **before `finish`** log out only the new authorization
 created by this test and verify its absence in Active Sessions from the existing
 trusted client. Preserve the existing Android authorization and all other devices.
+Before login, verify that this recovery client's authorization is older than
+24 hours: Telegram rejects another-session termination from a fresh client with
+`FRESH_RESET_AUTHORISATION_FORBIDDEN`. See the official
+[account.resetAuthorization contract](https://core.telegram.org/method/account.resetAuthorization).
+The pinned client's logout path catches an `auth.logOut()` error before removing
+its local account record, so a return to onboarding alone is not revocation proof.
 Deleting Simulator/VM does not revoke a Telegram authorization on the server. On
 interruption, terminate that exact new authorization from the trusted client;
 record `session_revocation_pending` until verified, and do not repeat production
