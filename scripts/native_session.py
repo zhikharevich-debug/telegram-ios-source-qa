@@ -127,8 +127,11 @@ def prepare():
         raise RuntimeError("Appium did not become ready; private log retained only on runner")
     caps = {"platformName": "iOS", "appium:automationName": "XCUITest", "appium:udid": state["device"], "appium:bundleId": state["bundle"], "appium:noReset": True, "appium:newCommandTimeout": 3600, "appium:showXcodeLog": False, "appium:showIOSLog": False, "appium:skipLogCapture": True, "appium:printPageSourceOnFindFailure": False}
     caps["appium:showXcodeLog"] = os.environ.get("QA_NATIVE_TARGET") == "settings"
+    # The free runner was still compiling WDA when its default 60s ping timer
+    # expired. Finish build-for-testing before measuring launch readiness.
+    caps.update({"appium:prebuildWDA": True, "appium:derivedDataPath": str(TEMP / "wda-derived"), "appium:wdaLaunchTimeout": 300000, "appium:wdaStartupRetries": 1, "appium:wdaBindingIP": "127.0.0.1"})
     phase("xcuitest-session")
-    session = local_request("/session", {"capabilities": {"alwaysMatch": caps}}, timeout=600)["value"]["sessionId"]
+    session = local_request("/session", {"capabilities": {"alwaysMatch": caps}}, timeout=1200)["value"]["sessionId"]
     state["session"] = session
     phase("encrypted-control")
     control_env = child_env.copy()
