@@ -35,6 +35,7 @@ def save():
 
 def stage(label, args, timeout=120, cwd=SOURCE):
     REPORT["stage"] = label
+    REPORT.pop("elapsed_stage_seconds", None)
     save()
     print(f"Stage: {label}", flush=True)
     remaining = int(DEADLINE - time.monotonic())
@@ -46,7 +47,19 @@ def stage(label, args, timeout=120, cwd=SOURCE):
     with log_path.open("w", encoding="utf-8") as log:
         with subprocess.Popen(args, cwd=cwd, stdout=log, stderr=subprocess.STDOUT, start_new_session=True) as process:
             try:
-                returncode = process.wait(timeout=timeout)
+                started = time.monotonic()
+                until = started + timeout
+                while True:
+                    try:
+                        returncode = process.wait(timeout=max(0, min(60, until - time.monotonic())))
+                        break
+                    except subprocess.TimeoutExpired:
+                        if time.monotonic() >= until:
+                            raise
+                        REPORT["elapsed_stage_seconds"] = round(time.monotonic() - started)
+                        REPORT["free_disk_gib"] = round(shutil.disk_usage(TEMP).free / 2**30, 2)
+                        save()
+                        print(f"Progress: {label}; elapsed={REPORT['elapsed_stage_seconds']}s; free_disk={REPORT['free_disk_gib']}GiB", flush=True)
                 if returncode:
                     failure = f"exited {returncode}"
             except subprocess.TimeoutExpired:
@@ -57,6 +70,15 @@ def stage(label, args, timeout=120, cwd=SOURCE):
                     pass
                 process.wait(timeout=30)
                 failure = f"timed out after {timeout} seconds"
+            except BaseException:
+                # Disk-full/progress IO errors must not make Popen.__exit__ wait
+                # for an unbounded compiler after the normal deadline is lost.
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait(timeout=30)
+                raise
     if failure:
         # No credentials are supplied to this job. Still suppress bundled sample API values.
         with log_path.open("rb") as private_log:
@@ -96,6 +118,11 @@ try:
     started = time.monotonic()
     stage("compile", ["python3", "build-system/Make/Make.py", "build", "--configurationPath=" + str(config_path), "--xcodeManagedCodesigning", "--buildNumber=100001", "--configuration=debug_sim_arm64"], timeout=16200)
     REPORT["build_seconds"] = round(time.monotonic() - started)
+    # Release the resident Java build daemon before Simulator and XCTest need RAM.
+    bazel = list((SOURCE / "build-input").glob("bazel-*-darwin-arm64"))
+    if len(bazel) != 1:
+        raise RuntimeError("Expected one pinned Bazel binary")
+    stage("stop-bazel", [str(bazel[0]), "shutdown"], timeout=120)
     stage("source-integrity", ["git", "diff", "--exit-code", "--", ".", ":(exclude)MODULE.bazel.lock"])
     ipa = SOURCE / "bazel-bin/Telegram/Telegram.ipa"
     with ipa.open("rb") as ipa_file:

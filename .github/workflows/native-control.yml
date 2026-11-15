@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: native-ios-control
+  group: native-ios-control-${{ inputs.target }}
   cancel-in-progress: false
 
 jobs:
