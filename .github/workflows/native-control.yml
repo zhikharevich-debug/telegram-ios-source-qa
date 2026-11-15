@@ -1,0 +1,79 @@
+name: Encrypted native iOS control probe
+
+'on':
+  workflow_dispatch:
+    inputs:
+      target:
+        type: choice
+        options: [settings, telegram]
+        default: settings
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-ios-control
+  cancel-in-progress: false
+
+jobs:
+  control:
+    if: github.event.repository.private == false
+    runs-on: macos-26
+    timeout-minutes: 330
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      APPIUM_HOME: ${{ runner.temp }}/appium-home
+      PYTHONPATH: ${{ runner.temp }}/qa-python
+      QA_NATIVE_TARGET: ${{ inputs.target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Check ephemeral control key is configured
+        env:
+          QA_CONTROL_KEY: ${{ secrets.QA_CONTROL_KEY }}
+        run: python3 -c 'import os; assert os.environ.get("QA_CONTROL_KEY"), "Missing ephemeral control key"'
+      - name: Install compatible official Appium tools
+        timeout-minutes: 20
+        run: |
+          python3 -m pip install --target "$RUNNER_TEMP/qa-python" cryptography==46.0.3
+          npm install --prefix "$RUNNER_TEMP/appium" appium@3.9.1
+          "$RUNNER_TEMP/appium/node_modules/.bin/appium" driver install xcuitest@12.22.8
+          python3 -m unittest discover -s scripts -p native_control_test.py
+      - name: Build and launch unchanged official Telegram source
+        if: inputs.target == 'telegram'
+        timeout-minutes: 200
+        env:
+          QA_BUILD_CHANNEL: stable
+          QA_PRESERVE_DEVICE: '1'
+        run: python3 scripts/build_ios.py
+      - name: Preserve signed-out build evidence
+        if: inputs.target == 'telegram' && always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: signed-out-source-build
+          path: |
+            artifacts/build.json
+            artifacts/build-failure.txt
+            artifacts/signed-out-native.png
+          if-no-files-found: ignore
+          retention-days: 1
+      - name: Prepare fixed native session and encrypted channel
+        timeout-minutes: 22
+        env:
+          QA_CONTROL_KEY: ${{ secrets.QA_CONTROL_KEY }}
+        run: python3 scripts/native_session.py prepare
+      - name: Publish non-secret connection coordinates
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: encrypted-control-endpoint
+          path: artifacts/control-endpoint.json
+          retention-days: 1
+          if-no-files-found: error
+      - name: Await office-side native test completion
+        timeout-minutes: 62
+        run: python3 scripts/native_session.py wait
+      - name: Destroy ephemeral native session
+        if: always()
+        timeout-minutes: 5
+        run: python3 scripts/native_session.py cleanup
