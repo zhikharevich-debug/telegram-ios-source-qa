@@ -11,7 +11,11 @@ import shutil
 import subprocess
 import time
 
-UPSTREAM = "24638bc69bd083981b178dd1e7f921eebbf7fc46"
+CHANNELS = {
+    "preview": ("24638bc69bd083981b178dd1e7f921eebbf7fc46", "27.1", "iOS 27.1"),
+    "stable": ("f1dd7a2dbd02cbbf513e75d5695d8d36d1cf5838", "26.6", "iOS 26.5"),
+}
+UPSTREAM, XCODE_VERSION, IOS_RUNTIME = CHANNELS[os.environ.get("QA_BUILD_CHANNEL", "preview")]
 ROOT = Path.cwd()
 TEMP = Path(os.environ["RUNNER_TEMP"])
 SOURCE = TEMP / "Telegram-iOS"
@@ -19,9 +23,10 @@ OUTPUT = ROOT / "artifacts"
 OUTPUT.mkdir(exist_ok=True)
 REPORT = {"status": "running", "upstream": UPSTREAM, "login": "not_run"}
 DEVICE = None
+PRESERVE = False
 REDACT = []
 # Leave time inside the 330-minute job for diagnostics and Simulator cleanup.
-DEADLINE = time.monotonic() + 310 * 60
+DEADLINE = time.monotonic() + (190 if os.environ.get("QA_PRESERVE_DEVICE") == "1" else 310) * 60
 
 
 def save():
@@ -71,7 +76,7 @@ def capture(*args):
 
 try:
     REPORT.update(architecture=capture("uname", "-m"), xcode=capture("xcodebuild", "-version"))
-    assert REPORT["architecture"] == "arm64" and REPORT["xcode"].startswith("Xcode 27.1\n")
+    assert REPORT["architecture"] == "arm64" and REPORT["xcode"].startswith("Xcode " + XCODE_VERSION + "\n")
     stage("initialize", ["git", "init", str(SOURCE)], cwd=TEMP)
     stage("origin", ["git", "remote", "add", "origin", "https://github.com/TelegramMessenger/Telegram-iOS.git"])
     stage("fetch", ["git", "fetch", "--depth=1", "--filter=blob:none", "origin", UPSTREAM], timeout=1200)
@@ -105,7 +110,7 @@ try:
     platform = capture("xcrun", "vtool", "-show-build", str(executable))
     assert "IOSSIMULATOR" in platform, "Device IPA is not a Simulator app"
     REPORT["bundle_id"] = info["CFBundleIdentifier"]
-    runtime = next(r for r in json.loads(capture("xcrun", "simctl", "list", "runtimes", "--json"))["runtimes"] if r.get("isAvailable") and r["name"] == "iOS 27.1")
+    runtime = next(r for r in json.loads(capture("xcrun", "simctl", "list", "runtimes", "--json"))["runtimes"] if r.get("isAvailable") and r["name"] == IOS_RUNTIME)
     devices = json.loads(capture("xcrun", "simctl", "list", "devices", "available", "--json"))["devices"]
     candidates = {d["deviceTypeIdentifier"] for d in devices.get(runtime["identifier"], []) if d.get("isAvailable")}
     candidates.update(d["identifier"] for d in runtime.get("supportedDeviceTypes", []))
@@ -114,19 +119,26 @@ try:
     REPORT.update(runtime=runtime["name"], device=phone["name"])
     DEVICE = capture("xcrun", "simctl", "create", "Telegram-Native-QA", phone["identifier"], runtime["identifier"])
     stage("boot", ["xcrun", "simctl", "boot", DEVICE])
+    simulator = str(Path(os.environ["DEVELOPER_DIR"]) / "Applications/Simulator.app")
+    stage("display", ["open", "-a", simulator, "--args", "-CurrentDeviceUDID", DEVICE])
     stage("bootstatus", ["xcrun", "simctl", "bootstatus", DEVICE, "-b"], timeout=480)
     stage("install", ["xcrun", "simctl", "install", DEVICE, str(app)], timeout=240)
     stage("launch", ["xcrun", "simctl", "launch", DEVICE, info["CFBundleIdentifier"]])
     time.sleep(10)
     stage("signed-out-screenshot", ["xcrun", "simctl", "io", DEVICE, "screenshot", str(OUTPUT / "signed-out-native.png")])
     REPORT.update(status="passed", native_client="launch_command_succeeded", acceptance="not_verified", login="not_run")
+    if os.environ.get("QA_PRESERVE_DEVICE") == "1":
+        state_path = TEMP / "native-build-state.json"
+        state_path.write_text(json.dumps({"device": DEVICE, "bundle": info["CFBundleIdentifier"]}))
+        state_path.chmod(0o600)
+        PRESERVE = True
 except Exception as error:
     REPORT.update(status="failed", failure_type=type(error).__name__, failure=str(error)[:300])
     raise
 finally:
     save()
     cleanup_failed = False
-    if DEVICE:
+    if DEVICE and not PRESERVE:
         for action in ("shutdown", "delete"):
             try:
                 subprocess.run(["xcrun", "simctl", action, DEVICE], check=True, timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
