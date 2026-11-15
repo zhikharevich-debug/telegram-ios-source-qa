@@ -18,9 +18,12 @@ Target `telegram` builds the pinned official release 13.0 source with matching
 Xcode 26.6, then exposes the same narrowly scoped UI control. Neither target
 automatically logs in, imports sessions, creates portal rights or sends messages.
 
-Before each run, configure `QA_CONTROL_KEY` with a fresh random 32-byte key encoded
-as URL-safe base64. Keep the office copy outside Git and never use dispatch inputs,
-URLs, screenshots or logs for it. Remove the key after the run. The tiny public
+For one explicitly authorized test series, configure `QA_CONTROL_KEY` with a fresh
+random 32-byte master encoded as URL-safe base64. Session-specific keys are derived
+using each fresh session ID. Keep the office copy outside Git with an owner-only
+ACL (plus trusted SYSTEM/Administrators on Windows), not merely gitignore. Never
+use dispatch inputs, URLs, screenshots or logs for it. Remove both the repository
+secret and local file after all runs in the series, and verify absence. The tiny public
 endpoint artifact contains only the temporary hostname, fixed session ID, sequence
 handoff and expiry. It grants no control without the key. Requests and responses
 use authenticated encryption in addition to HTTPS; replayed or altered messages
@@ -32,6 +35,16 @@ receipt. A transport failure invalidates the client; never retry an uncertain
 state-changing command. `call('finish')` closes the control window. The workflow
 then stops processes and deletes its own Simulator; a finite timeout and hosted
 VM teardown bound failed runs. It never uploads a logged-in Simulator image.
+
+If an account was signed in, **before `finish`** log out only the new authorization
+created by this test and verify its absence in Active Sessions from the existing
+trusted client. Preserve the existing Android authorization and all other devices.
+Deleting Simulator/VM does not revoke a Telegram authorization on the server. On
+interruption, terminate that exact new authorization from the trusted client;
+record `session_revocation_pending` until verified, and do not repeat production
+login while it remains pending. The workflow does not claim automatic server-side
+revocation. Empty Settings or signed-out source probes create no Telegram account
+authorization and record `not_created`.
 
 An anonymous Settings-only startup failure before the control endpoint exists
 may retain a bounded, filtered driver diagnostic. This exception is guarded by
@@ -46,3 +59,9 @@ encrypted private UI channel. Test DC and production acceptance remain distinct.
 Actual execution evidence belongs in individual run receipts. A successful
 Simulator boot or `simctl launch` alone does not prove Telegram login, an
 administrator screen or an application board.
+
+Verified native-control receipt: [run 43730461899](https://github.com/zhikharevich-debug/telegram-ios-source-qa/actions/runs/43730461899)
+passed actual Settings source/screenshot, a click into General, unauthenticated
+401, forbidden-operation rejection, encrypted finish and Simulator deletion.
+No Apple ID or Telegram account was used. This proves the control mechanism;
+Telegram login, administrator and board acceptance are separate receipts.

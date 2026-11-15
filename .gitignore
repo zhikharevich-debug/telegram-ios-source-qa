@@ -1,4 +1,5 @@
 .local/
+.private/
 artifacts/
 Telegram-iOS/
 __pycache__/
