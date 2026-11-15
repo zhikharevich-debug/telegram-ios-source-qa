@@ -1,0 +1,31 @@
+name: QA harness checks
+
+'on':
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Check workflow syntax and contexts
+        run: |
+          curl --fail --silent --show-error --location https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz --output "$RUNNER_TEMP/actionlint.tgz"
+          printf '%s  %s\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 "$RUNNER_TEMP/actionlint.tgz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/actionlint.tgz" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -config-file .github/actionlint.yaml -shellcheck= -pyflakes=
+      - name: Exercise encrypted control with synthetic local HTTP only
+        run: |
+          python3 -m venv "$RUNNER_TEMP/qa-venv"
+          "$RUNNER_TEMP/qa-venv/bin/pip" install cryptography==46.0.3
+          "$RUNNER_TEMP/qa-venv/bin/python" -m unittest discover -s scripts -p native_control_test.py
+          "$RUNNER_TEMP/qa-venv/bin/python" -m py_compile scripts/*.py
