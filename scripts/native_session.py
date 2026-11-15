@@ -26,6 +26,43 @@ def phase(label):
     print("Native phase: " + label, flush=True)
 
 
+def settings_startup_diagnostic(error):
+    # This gate is before any control endpoint or Telegram/account is available.
+    if PHASE != "xcuitest-session" or os.environ.get("QA_NATIVE_TARGET") != "settings" or ENDPOINT.exists():
+        return
+    diagnostic = {"phase": PHASE, "error_type": type(error).__name__}
+    if isinstance(error, urllib.error.HTTPError):
+        diagnostic["http_status"] = error.code
+        try:
+            value = json.loads(error.read(16000)).get("value", {})
+            diagnostic["driver_error"] = str(value.get("error", ""))[:100]
+            diagnostic["driver_message"] = str(value.get("message", ""))[:6000]
+        except (OSError, ValueError, AttributeError):
+            pass
+    log_path = TEMP / "appium-private.log"
+    if log_path.exists():
+        with log_path.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, stream.tell() - 24000))
+            # Anonymous Settings bootstrap only; never executed for Telegram.
+            diagnostic["settings_bootstrap_tail"] = stream.read().decode("utf-8", errors="replace")
+    credentials = [value for name, value in os.environ.items() if re.search(r"TOKEN|SECRET|PASSWORD|API_KEY|CONTROL_KEY", name, re.I) and len(value) >= 6]
+    for name, value in diagnostic.items():
+        if not isinstance(value, str):
+            continue
+        for credential in credentials:
+            value = value.replace(credential, "[redacted]")
+        value = re.sub(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]", value)
+        value = re.sub(r'''(?i)(["'](?:authorization|api_hash|api_key|token|password|secret)["']\s*:\s*)(["'])(.*?)\2''', lambda match: match[1] + match[2] + "[redacted]" + match[2], value)
+        value = re.sub(r"(?im)(\bauthorization\b\s*[:=]\s*)[^\r\n]*", r"\1[redacted]", value)
+        value = re.sub(r'''(?i)(\b(?:api_hash|api_key|token|password|secret)\b\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)''', r"\1[redacted]", value)
+        diagnostic[name] = value
+    text = json.dumps(diagnostic, indent=2)
+    output = Path("artifacts/settings-startup-diagnostic.json")
+    output.parent.mkdir(exist_ok=True)
+    output.write_text(text)
+
+
 def capture(*args):
     return subprocess.check_output(args, text=True, timeout=90).strip()
 
@@ -72,10 +109,12 @@ def prepare():
         subprocess.run(["xcrun", "simctl", "bootstatus", state["device"], "-b"], check=True, timeout=480)
     assert DEVICE_PATTERN.fullmatch(state["device"])
     write_state(state)
-    child_env = {k: v for k, v in os.environ.items() if k != "QA_CONTROL_KEY"}
+    safe_environment = {"HOME", "PATH", "DEVELOPER_DIR", "APPIUM_HOME", "TMPDIR", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "SHELL", "CI", "TERM", "PYTHONPATH"}
+    child_env = {key: value for key, value in os.environ.items() if key in safe_environment}
     phase("appium-server")
     appium = str(TEMP / "appium/node_modules/.bin/appium")
-    state["pids"].append(background([appium, "--address", "127.0.0.1", "--port", "4723", "--use-drivers", "xcuitest", "--log-level", "error"], "appium", child_env))
+    log_level = "info" if os.environ.get("QA_NATIVE_TARGET") == "settings" else "error"
+    state["pids"].append(background([appium, "--address", "127.0.0.1", "--port", "4723", "--use-drivers", "xcuitest", "--log-level", log_level], "appium", child_env))
     write_state(state)
     for _ in range(60):
         try:
@@ -87,11 +126,13 @@ def prepare():
     else:
         raise RuntimeError("Appium did not become ready; private log retained only on runner")
     caps = {"platformName": "iOS", "appium:automationName": "XCUITest", "appium:udid": state["device"], "appium:bundleId": state["bundle"], "appium:noReset": True, "appium:newCommandTimeout": 3600, "appium:showXcodeLog": False, "appium:showIOSLog": False, "appium:skipLogCapture": True, "appium:printPageSourceOnFindFailure": False}
+    caps["appium:showXcodeLog"] = os.environ.get("QA_NATIVE_TARGET") == "settings"
     phase("xcuitest-session")
     session = local_request("/session", {"capabilities": {"alwaysMatch": caps}}, timeout=600)["value"]["sessionId"]
     state["session"] = session
     phase("encrypted-control")
-    control_env = os.environ.copy()
+    control_env = child_env.copy()
+    control_env["QA_CONTROL_KEY"] = os.environ["QA_CONTROL_KEY"]
     control_env.update(QA_APPIUM_SESSION_ID=session, QA_CONTROL_LIFETIME_SECONDS="3600")
     state["control_pid"] = background([sys.executable, "scripts/native_control.py"], "control", control_env)
     state["pids"].append(state["control_pid"])
@@ -189,5 +230,9 @@ if __name__ == "__main__":
             raise ValueError("Invalid mode")
     except Exception as error:
         # Production UI errors/command parameters must not enter public CI logs.
+        try:
+            settings_startup_diagnostic(error)
+        except Exception:
+            pass
         print("Native orchestration failed at " + PHASE + ": " + type(error).__name__, file=sys.stderr)
         sys.exit(1)

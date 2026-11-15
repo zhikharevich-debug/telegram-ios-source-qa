@@ -33,6 +33,10 @@ state-changing command. `call('finish')` closes the control window. The workflow
 then stops processes and deletes its own Simulator; a finite timeout and hosted
 VM teardown bound failed runs. It never uploads a logged-in Simulator image.
 
+An anonymous Settings-only startup failure before the control endpoint exists
+may retain a bounded, filtered driver diagnostic. This exception is guarded by
+the target and startup phase; it never applies to Telegram or an account session.
+
 Supported UI operations are source, screenshot, element lookup/click/text/clear,
 tap, swipe and window size. Arbitrary Appium sessions, shell execution, file
 transfer and external upstream URLs are excluded. Production phone numbers,
