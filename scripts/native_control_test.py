@@ -113,6 +113,14 @@ class ProtocolTests(unittest.TestCase):
         self.assertFalse(self.engine.completed.is_set())
         response = self.engine.handle(self.protocol.authorization, request)
         self.assertTrue(self.response(request, response)["ok"])
+        self.assertTrue(self.engine.finish_requested.is_set())
+        self.assertFalse(self.engine.completed.is_set())
+        later_request = self.request(2)
+        later_response = self.engine.handle(self.protocol.authorization, later_request)
+        self.assertEqual(self.response(later_request, later_response), {"ok": False, "error": "expired"})
+        self.engine.response_delivered(later_response)
+        self.assertFalse(self.engine.completed.is_set())
+        self.engine.response_delivered(response)
         self.assertTrue(self.engine.completed.is_set())
         self.session.perform.assert_not_called()
 
@@ -234,10 +242,14 @@ class HttpBoundaryTests(unittest.TestCase):
             self.wait_for_handlers(self.server.MAX_HANDLERS)
             excess = control.http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=2)
             try:
-                excess.request("POST", "/control", b"{}")
-                response = excess.getresponse()
-                self.assertEqual(response.status, 401)
-                self.assertEqual(response.read(), b"")
+                try:
+                    excess.request("POST", "/control", b"{}")
+                    response = excess.getresponse()
+                    self.assertEqual(response.status, 401)
+                    self.assertEqual(response.read(), b"")
+                except (ConnectionResetError, ConnectionAbortedError, control.http.client.RemoteDisconnected):
+                    # Windows may reset the rejected socket before its body is sent.
+                    pass
             finally:
                 excess.close()
             self.assertEqual(self.server.active_handlers, self.server.MAX_HANDLERS)
@@ -286,6 +298,66 @@ class HttpBoundaryTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "unavailable"):
                 client.call("source")
         connection.request.assert_called_once()
+
+
+class LifecycleTests(unittest.TestCase):
+    def test_threaded_cli_waits_until_encrypted_finish_reply_is_written(self):
+        reply_pending = threading.Event()
+        allow_reply = threading.Event()
+
+        class GatedHandler(control.ControlHandler):
+            def _respond(self, status, body):
+                if status == 200:
+                    reply_pending.set()
+                    if not allow_reply.wait(timeout=2):
+                        raise TimeoutError("Test reply was not released")
+                super()._respond(status, body)
+
+        server = control.ControlServer(("127.0.0.1", 0), GatedHandler)
+        server.timeout = 0.02
+        session = Mock()
+        server.engine = control.ControlEngine(control.Protocol(KEY, SESSION), session)
+        cli_errors, client_errors, replies = [], [], []
+
+        def run_cli():
+            try:
+                control.serve_from_environment()
+            except Exception as error:
+                cli_errors.append(type(error).__name__)
+
+        def run_client():
+            try:
+                replies.append(control.ControlClient("http://127.0.0.1:" + str(server.server_port), KEY, SESSION).call("finish"))
+            except Exception as error:
+                client_errors.append(type(error).__name__)
+
+        cli = threading.Thread(target=run_cli, daemon=True)
+        client = threading.Thread(target=run_client, daemon=True)
+        with patch.object(control, "create_server", return_value=server), patch.dict(control.os.environ, {"QA_CONTROL_KEY": control._encode(KEY), "QA_APPIUM_SESSION_ID": SESSION}):
+            try:
+                cli.start()
+                client.start()
+                self.assertTrue(reply_pending.wait(timeout=2))
+                self.assertTrue(server.engine.finish_requested.is_set())
+                self.assertFalse(server.engine.completed.is_set())
+                cli.join(timeout=0.15)
+                self.assertTrue(cli.is_alive(), "CLI exited before its daemon handler wrote the finish reply")
+                allow_reply.set()
+                client.join(timeout=2)
+                cli.join(timeout=2)
+                self.assertFalse(client.is_alive())
+                self.assertFalse(cli.is_alive())
+                self.assertEqual(replies, [{"ok": True, "value": None}])
+                self.assertEqual(client_errors, [])
+                self.assertEqual(cli_errors, [])
+                self.assertTrue(server.engine.completed.is_set())
+                session.perform.assert_not_called()
+            finally:
+                allow_reply.set()
+                server.engine.deadline = time.monotonic()
+                client.join(timeout=2)
+                cli.join(timeout=2)
+                server.server_close()
 
 
 if __name__ == "__main__":

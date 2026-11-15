@@ -227,7 +227,15 @@ class ControlEngine:
         self.deadline = time.monotonic() + _integer(lifetime, 30, 3600)
         self._sequence = 0
         self._lock = threading.Lock()
+        self.finish_requested = threading.Event()
         self.completed = threading.Event()
+        self._finish_response = None
+
+    def response_delivered(self, response: bytes) -> None:
+        """Allow CLI shutdown only after the exact finish reply was written."""
+        with self._lock:
+            if self._finish_response is not None and hmac.compare_digest(response, self._finish_response):
+                self.completed.set()
 
     def handle(self, authorization: str, body: bytes) -> bytes:
         """Return encrypted success/error; reject bad auth, tag, or sequence."""
@@ -240,10 +248,12 @@ class ControlEngine:
             if sequence != self._sequence + 1:
                 raise TransportError(409)
             self._sequence = sequence
-            if self.completed.is_set() or time.monotonic() >= self.deadline:
+            finishing = False
+            if self.finish_requested.is_set() or time.monotonic() >= self.deadline:
                 payload = {"ok": False, "error": "expired"}
             elif request == {"op": "finish"}:
-                self.completed.set()
+                self.finish_requested.set()
+                finishing = True
                 payload = {"ok": True, "value": None}
             else:
                 try:
@@ -255,9 +265,12 @@ class ControlEngine:
                     # Neither Appium exception text nor user-entered values leave in errors.
                     payload = {"ok": False, "error": "upstream_failed"}
             try:
-                return self.protocol.seal("response", sequence, payload, nonce)
+                response = self.protocol.seal("response", sequence, payload, nonce)
             except (ValueError, TypeError, UnicodeError):
-                return self.protocol.seal("response", sequence, {"ok": False, "error": "upstream_failed"}, nonce)
+                response = self.protocol.seal("response", sequence, {"ok": False, "error": "upstream_failed"}, nonce)
+            if finishing:
+                self._finish_response = response
+            return response
 
 
 class ControlHandler(BaseHTTPRequestHandler):
@@ -322,6 +335,7 @@ class ControlHandler(BaseHTTPRequestHandler):
                 raise TransportError(401)
             encrypted = self.server.engine.handle(authorizations[0], body)
             self._respond(200, encrypted)
+            self.server.engine.response_delivered(encrypted)
         except TransportError as error:
             self._respond(error.status, b"")
         except (OSError, ValueError, OverflowError):

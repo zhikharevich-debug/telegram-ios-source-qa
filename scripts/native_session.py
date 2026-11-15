@@ -17,6 +17,13 @@ TEMP = Path(os.environ["RUNNER_TEMP"])
 STATE = TEMP / "native-session.json"
 ENDPOINT = Path("artifacts/control-endpoint.json")
 DEVICE_PATTERN = re.compile(r"[0-9A-Fa-f-]{36}\Z")
+PHASE = "starting"
+
+
+def phase(label):
+    global PHASE
+    PHASE = label
+    print("Native phase: " + label, flush=True)
 
 
 def capture(*args):
@@ -43,6 +50,7 @@ def background(args, name, env):
 def prepare():
     from native_control import ControlClient, key_from_environment
 
+    phase("simulator")
     state = {"pids": []}
     write_state(state)
     source_state = TEMP / "native-build-state.json"
@@ -65,6 +73,7 @@ def prepare():
     assert DEVICE_PATTERN.fullmatch(state["device"])
     write_state(state)
     child_env = {k: v for k, v in os.environ.items() if k != "QA_CONTROL_KEY"}
+    phase("appium-server")
     appium = str(TEMP / "appium/node_modules/.bin/appium")
     state["pids"].append(background([appium, "--address", "127.0.0.1", "--port", "4723", "--use-drivers", "xcuitest", "--log-level", "error"], "appium", child_env))
     write_state(state)
@@ -78,8 +87,10 @@ def prepare():
     else:
         raise RuntimeError("Appium did not become ready; private log retained only on runner")
     caps = {"platformName": "iOS", "appium:automationName": "XCUITest", "appium:udid": state["device"], "appium:bundleId": state["bundle"], "appium:noReset": True, "appium:newCommandTimeout": 3600, "appium:showXcodeLog": False, "appium:showIOSLog": False, "appium:skipLogCapture": True, "appium:printPageSourceOnFindFailure": False}
+    phase("xcuitest-session")
     session = local_request("/session", {"capabilities": {"alwaysMatch": caps}}, timeout=600)["value"]["sessionId"]
     state["session"] = session
+    phase("encrypted-control")
     control_env = os.environ.copy()
     control_env.update(QA_APPIUM_SESSION_ID=session, QA_CONTROL_LIFETIME_SECONDS="3600")
     state["control_pid"] = background([sys.executable, "scripts/native_control.py"], "control", control_env)
@@ -107,6 +118,7 @@ def prepare():
     window = client.call("window")
     assert window.get("ok"), "Authenticated window request failed"
     archive_path = TEMP / "cloudflared.tgz"
+    phase("verified-tunnel-binary")
     urllib.request.urlretrieve("https://github.com/cloudflare/cloudflared/releases/download/2026.11.0/cloudflared-darwin-arm64.tgz", archive_path)
     with archive_path.open("rb") as stream:
         assert hashlib.file_digest(stream, "sha256").hexdigest() == "8c2f90277ef06a6080bb40b964d33f09f1188102f8798f2e344174b6cf41accf"
@@ -116,6 +128,7 @@ def prepare():
         with archive.extractfile(member) as source, tunnel.open("wb") as destination:
             shutil.copyfileobj(source, destination)
     tunnel.chmod(0o700)
+    phase("temporary-tunnel")
     state["pids"].append(background([str(tunnel), "tunnel", "--url", "http://127.0.0.1:4781", "--no-autoupdate"], "tunnel", child_env))
     write_state(state)
     for _ in range(60):
@@ -176,5 +189,5 @@ if __name__ == "__main__":
             raise ValueError("Invalid mode")
     except Exception as error:
         # Production UI errors/command parameters must not enter public CI logs.
-        print("Native orchestration failed: " + type(error).__name__, file=sys.stderr)
+        print("Native orchestration failed at " + PHASE + ": " + type(error).__name__, file=sys.stderr)
         sys.exit(1)
