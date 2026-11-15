@@ -45,6 +45,12 @@ Before login, verify that this recovery client's authorization is older than
 [account.resetAuthorization contract](https://core.telegram.org/method/account.resetAuthorization).
 The pinned client's logout path catches an `auth.logOut()` error before removing
 its local account record, so a return to onboarding alone is not revocation proof.
+The run operator records the recovery-age evidence, reachable Active Sessions
+and the before-login device list in a private receipt. Do not enter the working
+phone number without these prerequisites or while revocation is pending. Identify
+the new row from the before/after difference plus client build, device and test
+time; never terminate an ambiguous existing row. After logout refresh the list
+and verify that only the new row disappeared. Do not publish these private lists.
 Deleting Simulator/VM does not revoke a Telegram authorization on the server. On
 interruption, terminate that exact new authorization from the trusted client;
 record `session_revocation_pending` until verified, and do not repeat production
