@@ -73,7 +73,8 @@ try:
     REPORT.update(architecture=capture("uname", "-m"), xcode=capture("xcodebuild", "-version"))
     assert REPORT["architecture"] == "arm64" and REPORT["xcode"].startswith("Xcode 27.1\n")
     stage("initialize", ["git", "init", str(SOURCE)], cwd=TEMP)
-    stage("fetch", ["git", "fetch", "--depth=1", "--filter=blob:none", "https://github.com/TelegramMessenger/Telegram-iOS.git", UPSTREAM], timeout=1200)
+    stage("origin", ["git", "remote", "add", "origin", "https://github.com/TelegramMessenger/Telegram-iOS.git"])
+    stage("fetch", ["git", "fetch", "--depth=1", "--filter=blob:none", "origin", UPSTREAM], timeout=1200)
     stage("checkout", ["git", "checkout", "--detach", "FETCH_HEAD"], timeout=1200)
     stage("submodules", ["git", "submodule", "update", "--init", "--recursive", "--depth=1", "--jobs=3"], timeout=2400)
     assert capture("git", "-C", str(SOURCE), "rev-parse", "HEAD") == UPSTREAM

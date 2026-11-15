@@ -1,0 +1,31 @@
+name: Stable free iOS Simulator probe
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    if: github.event.repository.private == false
+    runs-on: macos-26
+    timeout-minutes: 15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      QA_XCODE_VERSION: '26.6'
+      QA_IOS_RUNTIME: iOS 26.5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Boot clean stable iPhone Simulator and capture display
+        run: python3 scripts/probe_ios.py
+      - name: Preserve non-sensitive probe evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: stable-clean-ios-probe
+          path: artifacts/
+          if-no-files-found: ignore
+          retention-days: 1
