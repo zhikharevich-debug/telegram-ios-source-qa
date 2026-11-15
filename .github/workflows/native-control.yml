@@ -60,7 +60,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 1
       - name: Prepare fixed native session and encrypted channel
-        timeout-minutes: 22
+        timeout-minutes: 35
         env:
           QA_CONTROL_KEY: ${{ secrets.QA_CONTROL_KEY }}
         run: python3 scripts/native_session.py prepare
