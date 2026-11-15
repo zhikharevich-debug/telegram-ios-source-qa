@@ -70,6 +70,15 @@ def stage(label, args, timeout=120, cwd=SOURCE):
                     pass
                 process.wait(timeout=30)
                 failure = f"timed out after {timeout} seconds"
+            except BaseException:
+                # Disk-full/progress IO errors must not make Popen.__exit__ wait
+                # for an unbounded compiler after the normal deadline is lost.
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait(timeout=30)
+                raise
     if failure:
         # No credentials are supplied to this job. Still suppress bundled sample API values.
         with log_path.open("rb") as private_log:
