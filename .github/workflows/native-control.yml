@@ -40,7 +40,7 @@ jobs:
           python3 -m pip install --target "$RUNNER_TEMP/qa-python" cryptography==46.0.3
           npm install --prefix "$RUNNER_TEMP/appium" appium@3.9.1
           "$RUNNER_TEMP/appium/node_modules/.bin/appium" driver install xcuitest@12.22.8
-          python3 -m unittest discover -s scripts -p native_control_test.py
+          python3 -m unittest discover -s scripts -p '*_test.py'
       - name: Build and launch unchanged official Telegram source
         if: inputs.target == 'telegram'
         timeout-minutes: 200
@@ -78,3 +78,11 @@ jobs:
         if: always()
         timeout-minutes: 5
         run: python3 scripts/native_session.py cleanup
+      - name: Preserve anonymous Settings startup diagnosis only
+        if: failure() && inputs.target == 'settings'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: settings-startup-diagnostic
+          path: artifacts/settings-startup-diagnostic.json
+          retention-days: 1
+          if-no-files-found: ignore

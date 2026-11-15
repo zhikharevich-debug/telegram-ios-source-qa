@@ -27,5 +27,5 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/qa-venv"
           "$RUNNER_TEMP/qa-venv/bin/pip" install cryptography==46.0.3
-          "$RUNNER_TEMP/qa-venv/bin/python" -m unittest discover -s scripts -p native_control_test.py
+          "$RUNNER_TEMP/qa-venv/bin/python" -m unittest discover -s scripts -p '*_test.py'
           "$RUNNER_TEMP/qa-venv/bin/python" -m py_compile scripts/*.py
